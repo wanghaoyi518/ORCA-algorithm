@@ -5,3 +5,9 @@
 /build
 /.vscode
 README.html
+*.pdf
+*.png
+*.gif
+*.txt
+*.log
+*.zip
