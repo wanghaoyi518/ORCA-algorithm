@@ -43,145 +43,178 @@ class PushAndRotate:
                     break
 
     def clear_node(self, sub_map: SubMap, actor_set: ActorSet, node: Node, occupied_nodes=None):
-        debug_log(f"[clear_node] node: ({node.i},{node.j}), occupied={occupied_nodes}")
+        """严格按照C++ clearNode实现"""
         if occupied_nodes is None:
             occupied_nodes = set()
-        candidates = []
-        for i in range(sub_map.height):
-            for j in range(sub_map.width):
-                n = Node(i, j)
-                if not sub_map.is_traversable(i, j):
-                    continue
-                if n in occupied_nodes:
-                    continue
-                if n == node:
-                    continue
-                if any(a.current.x == n.i and a.current.y == n.j for a in actor_set):
-                    continue
-                candidates.append(n)
-        debug_log(f"[clear_node] 可行目标点: {[ (n.i, n.j) for n in candidates ]}")
-        for goal in candidates:
-            dijkstra = ISearch(sub_map)
-            occupied_nodes = set((a.current.x, a.current.y) for a in actor_set)
-            occupied_nodes.discard((node.i, node.j))
-            occupied_nodes.discard((goal.i, goal.j))
-            path = dijkstra.search(node, goal, occupied_nodes)
-            debug_log(f"[clear_node] 尝试目标: ({goal.i},{goal.j})，A*路径: {[ (n.i, n.j) for n in path ] if path else '无路径'}")
-            if path and len(path) > 1:
-                # 只移动一步
-                prev = path[-2]
-                cur = path[-1]
-                for a in actor_set:
-                    if a.current.x == cur.i and a.current.y == cur.j:
-                        debug_log(f"[clear_node] move actor {a.id} from ({cur.i},{cur.j}) to ({prev.i},{prev.j})")
-                        # 用A*路径逐步推进
-                        self.move_along_path(actor_set, a.id, path[-2:])
-                        break
-                if prev in occupied_nodes:
-                    debug_log(f"[clear_node] prev ({prev.i},{prev.j}) 已被占用，递归让路")
-                    if not self.clear_node(sub_map, actor_set, prev, occupied_nodes):
-                        return False
-                debug_log(f"[clear_node] return True (moved one step)")
-                return True
-        debug_log(f"[clear_node] 所有目标均失败, return False")
-        return False
+        
+        # 定义目标条件：找到未被占用的位置
+        def is_goal(start, cur, sub_map, actor_set):
+            return not any(a.current.x == cur.i and a.current.y == cur.j for a in actor_set)
+        
+        # 使用A*搜索找到路径
+        dijkstra = ISearch(sub_map)
+        
+        # 将occupied_nodes转换为坐标元组集合
+        occupied_nodes_set = set()
+        for pos in occupied_nodes:
+            if isinstance(pos, tuple):
+                occupied_nodes_set.add(pos)
+            else:
+                occupied_nodes_set.add((pos.i, pos.j))
+        
+        # 使用startSearch方法
+        search_result = dijkstra.startSearch(sub_map, actor_set, node.i, node.j, 0, 0, 
+                                           is_goal, True, True, 0, -1, -1, occupied_nodes_set)
+        
+        if not search_result.pathfound:
+            return False
+        
+        path = search_result.lppath
+        if not path:
+            return False
+        
+        # 按照C++逻辑：从路径末尾开始，逐步移动阻挡的agent
+        for i in range(len(path) - 2, -1, -1):
+            current_node = path[i]
+            next_node = path[i + 1]
+            
+            # 检查当前位置是否被占用
+            for a in actor_set:
+                if a.current.x == current_node.i and a.current.y == current_node.j:
+                    # 移动agent到下一个位置
+                    from_node = Node(a.current.x, a.current.y)
+                    to_node = Node(next_node.i, next_node.j)
+                    # 直接移动，不使用move_along_path
+                    a.current.x = to_node.i
+                    a.current.y = to_node.j
+                    # 记录移动
+                    di = to_node.i - from_node.i
+                    dj = to_node.j - from_node.j
+                    self.agents_moves.append(ActorMove(di, dj, a.id))
+                    break
+        
+        return True
 
     def push(self, sub_map: SubMap, actor_set: ActorSet, from_node: Node, to_node: Node, occupied_nodes=None):
-        debug_log(f"[push] from ({from_node.i},{from_node.j}) to ({to_node.i},{to_node.j}), occupied={occupied_nodes}")
+        """严格按照C++ push实现"""
         if occupied_nodes is None:
             occupied_nodes = set()
+        
+        # 检查目标位置是否在occupied_nodes中
         if to_node in occupied_nodes:
-            debug_log(f"[push] to_node {to_node.i},{to_node.j} in occupied_nodes, return False")
             return False
-        if not sub_map.is_traversable(to_node.i, to_node.j):
-            debug_log(f"[ERROR] push推进到障碍物: ({to_node.i},{to_node.j})，忽略该移动")
-            return False
+        
+        # 检查目标位置是否被agent占用
         blocking_actor = None
         for a in actor_set:
             if a.current.x == to_node.i and a.current.y == to_node.j:
                 blocking_actor = a
                 break
-        if blocking_actor is None:
-            dijkstra = ISearch(sub_map)
-            occupied_nodes = set((a.current.x, a.current.y) for a in actor_set)
-            occupied_nodes.discard((from_node.i, from_node.j))
-            occupied_nodes.discard((to_node.i, to_node.j))
-            path = dijkstra.search(from_node, to_node, occupied_nodes)
-            debug_log(f"[push] 无阻挡A*路径: {[ (n.i, n.j) for n in path ] if path else '无路径'}")
-            if not path or len(path) < 2:
-                debug_log(f"[push] 无法找到合法路径，return False")
+        
+        if blocking_actor is not None:
+            # 有阻挡，尝试清除
+            inserted = False
+            if from_node not in occupied_nodes:
+                occupied_nodes.add(from_node)
+                inserted = True
+            
+            can_clear = self.clear_node(sub_map, actor_set, to_node, occupied_nodes)
+            
+            if inserted:
+                occupied_nodes.remove(from_node)
+            
+            if not can_clear:
                 return False
-            # 用A*路径逐步推进
-            self.move_along_path(actor_set, [a.id for a in actor_set if a.current.x == from_node.i and a.current.y == from_node.j][0], path)
-            debug_log(f"[push] return True (no blocking actor, moved step by step)")
-            return True
-        debug_log(f"[push] blocking_actor: {blocking_actor.id} at ({to_node.i},{to_node.j})")
-        inserted = False
-        if from_node not in occupied_nodes:
-            occupied_nodes.add(from_node)
-            inserted = True
-        can_clear = self.clear_node(sub_map, actor_set, to_node, occupied_nodes)
-        debug_log(f"[push] clear_node result: {can_clear}")
-        if inserted:
-            occupied_nodes.remove(from_node)
-        if not can_clear:
-            debug_log(f"[push] clear_node failed, return False")
-            return False
-        # 只移动一步
-        self.move_along_path(actor_set, [a.id for a in actor_set if a.current.x == from_node.i and a.current.y == from_node.j][0], [from_node, to_node])
-        debug_log(f"[push] return True (after clear_node, moved one step)")
+        
+        # 直接移动agent，不使用move_along_path
+        for a in actor_set:
+            if a.current.x == from_node.i and a.current.y == from_node.j:
+                # 记录移动
+                di = to_node.i - from_node.i
+                dj = to_node.j - from_node.j
+                self.agents_moves.append(ActorMove(di, dj, a.id))
+                # 更新位置
+                a.current.x = to_node.i
+                a.current.y = to_node.j
+                break
+        
         return True
 
     def multipush(self, sub_map: SubMap, actor_set: ActorSet, first: Node, second: Node, to: Node, path):
+        """严格按照C++ multipush实现"""
         if len(path) > 1 and path[1].i == second.i and path[1].j == second.j:
             first, second = second, first
             path = path[1:]
+        
         prev_node = second
-        for idx in range(len(path)-1):
+        for idx in range(len(path) - 1):
             cur_node = path[idx]
-            next_node = path[idx+1]
+            next_node = path[idx + 1]
             occupied_nodes = {prev_node, cur_node}
-            if not sub_map.is_traversable(next_node.i, next_node.j):
-                debug_log(f"[ERROR] multipush推进到障碍物: ({next_node.i},{next_node.j})，忽略该移动")
-                return False
+            
+            # 检查下一个位置是否被占用
             blocking = any(a.current.x == next_node.i and a.current.y == next_node.j for a in actor_set)
             if blocking:
                 if not self.clear_node(sub_map, actor_set, next_node, occupied_nodes):
                     return False
-            # 用A*路径逐步推进
-            self.move_along_path(actor_set, [a.id for a in actor_set if a.current.x == cur_node.i and a.current.y == cur_node.j][0], [cur_node, next_node])
-            self.move_along_path(actor_set, [a.id for a in actor_set if a.current.x == prev_node.i and a.current.y == prev_node.j][0], [prev_node, cur_node])
+            
+            # 直接移动agent，不使用move_along_path
+            # 移动cur_node的agent到next_node
+            for a in actor_set:
+                if a.current.x == cur_node.i and a.current.y == cur_node.j:
+                    di = next_node.i - cur_node.i
+                    dj = next_node.j - cur_node.j
+                    self.agents_moves.append(ActorMove(di, dj, a.id))
+                    a.current.x = next_node.i
+                    a.current.y = next_node.j
+                    break
+            
+            # 移动prev_node的agent到cur_node
+            for a in actor_set:
+                if a.current.x == prev_node.i and a.current.y == prev_node.j:
+                    di = cur_node.i - prev_node.i
+                    dj = cur_node.j - prev_node.j
+                    self.agents_moves.append(ActorMove(di, dj, a.id))
+                    a.current.x = cur_node.i
+                    a.current.y = cur_node.j
+                    break
+            
             prev_node = cur_node
+        
         return True
 
     def rotate(self, sub_map: SubMap, actor_set: ActorSet, q_path, cycle_beg):
-        """Improved rotate function with complex case handling"""
+        """严格按照C++ rotate实现"""
         size = len(q_path) - cycle_beg
         
-        # Try simple rotation first
+        # 尝试简单旋转
         for i in range(cycle_beg, len(q_path)):
-            empty = not any(a.current.x == q_path[i].i and a.current.y == q_path[i].j for a in actor_set)
-            if empty:
-                for j in range(size-1):
+            if not any(a.current.x == q_path[i].i and a.current.y == q_path[i].j for a in actor_set):
+                for j in range(size - 1):
                     from_idx = cycle_beg + (i - cycle_beg - j - 1 + size) % size
                     to_idx = cycle_beg + (i - cycle_beg - j + size) % size
-                    if not sub_map.is_traversable(q_path[to_idx].i, q_path[to_idx].j):
-                        debug_log(f"[ERROR] rotate推进到障碍物: ({q_path[to_idx].i},{q_path[to_idx].j})，忽略该移动")
-                        return False
-                    self.move_along_path(actor_set, [a.id for a in actor_set if a.current.x == q_path[from_idx].i and a.current.y == q_path[from_idx].j][0], [q_path[from_idx], q_path[to_idx]])
+                    if any(a.current.x == q_path[from_idx].i and a.current.y == q_path[from_idx].j for a in actor_set):
+                        # 直接移动agent，不使用move_along_path
+                        for a in actor_set:
+                            if a.current.x == q_path[from_idx].i and a.current.y == q_path[from_idx].j:
+                                di = q_path[to_idx].i - q_path[from_idx].i
+                                dj = q_path[to_idx].j - q_path[from_idx].j
+                                self.agents_moves.append(ActorMove(di, dj, a.id))
+                                a.current.x = q_path[to_idx].i
+                                a.current.y = q_path[to_idx].j
+                                break
                 return True
         
-        # If simple rotation fails, try complex case handling
+        # 复杂情况处理
         cycle_nodes = set(q_path[cycle_beg:])
-        
         for i in range(cycle_beg, len(q_path)):
             cycle_nodes.discard(q_path[i])
             
-            # Find agent at current position
+            # 找到当前位置的agent
             first_agent_id = None
-            for agent in actor_set:
-                if agent.current.x == q_path[i].i and agent.current.y == q_path[i].j:
-                    first_agent_id = agent.id
+            for a in actor_set:
+                if a.current.x == q_path[i].i and a.current.y == q_path[i].j:
+                    first_agent_id = a.id
                     break
             
             if first_agent_id is None:
@@ -189,50 +222,58 @@ class PushAndRotate:
             
             beg_size = len(self.agents_moves)
             
-            # Try to clear the current position
+            # 尝试清除当前位置
             if self.clear_node(sub_map, actor_set, q_path[i], cycle_nodes):
                 end_size = len(self.agents_moves)
                 
-                # Find second agent (previous in cycle)
+                # 找到第二个agent（循环中的前一个）
                 second_agent_index = cycle_beg + (i - cycle_beg - 1 + size) % size
                 second_agent_id = None
-                for agent in actor_set:
-                    if agent.current.x == q_path[second_agent_index].i and agent.current.y == q_path[second_agent_index].j:
-                        second_agent_id = agent.id
+                for a in actor_set:
+                    if a.current.x == q_path[second_agent_index].i and a.current.y == q_path[second_agent_index].j:
+                        second_agent_id = a.id
                         break
                 
                 if second_agent_id is None:
                     cycle_nodes.add(q_path[i])
                     continue
                 
-                # Move second agent to current position
-                for agent in actor_set:
-                    if agent.id == second_agent_id:
-                        agent.current.x = q_path[i].i
-                        agent.current.y = q_path[i].j
+                # 移动第二个agent到当前位置
+                for a in actor_set:
+                    if a.id == second_agent_id:
+                        a.current.x = q_path[i].i
+                        a.current.y = q_path[i].j
                         break
                 
-                # Get current position of first agent
+                # 获取第一个agent的当前位置
                 cur_position = None
-                for agent in actor_set:
-                    if agent.id == first_agent_id:
-                        cur_position = Node(agent.current.x, agent.current.y)
+                for a in actor_set:
+                    if a.id == first_agent_id:
+                        cur_position = Node(a.current.x, a.current.y)
                         break
                 
                 if cur_position is None:
                     cycle_nodes.add(q_path[i])
                     continue
                 
-                # Try swap operation
+                # 尝试交换操作
                 if self.swap(sub_map, actor_set, q_path[i], cur_position):
-                    # Complete the rotation
-                    for j in range(size-1):
+                    # 完成旋转
+                    for j in range(size - 1):
                         from_idx = cycle_beg + (i - cycle_beg - j - 2 + size) % size
                         to_idx = cycle_beg + (i - cycle_beg - j - 1 + size) % size
                         if any(a.current.x == q_path[from_idx].i and a.current.y == q_path[from_idx].j for a in actor_set):
-                            self.move_along_path(actor_set, [a.id for a in actor_set if a.current.x == q_path[from_idx].i and a.current.y == q_path[from_idx].j][0], [q_path[from_idx], q_path[to_idx]])
+                            # 直接移动agent
+                            for a in actor_set:
+                                if a.current.x == q_path[from_idx].i and a.current.y == q_path[from_idx].j:
+                                    di = q_path[to_idx].i - q_path[from_idx].i
+                                    dj = q_path[to_idx].j - q_path[from_idx].j
+                                    self.agents_moves.append(ActorMove(di, dj, a.id))
+                                    a.current.x = q_path[to_idx].i
+                                    a.current.y = q_path[to_idx].j
+                                    break
                     
-                    # Reverse the moves from clear_node operation
+                    # 反转clear_node操作的移动
                     self.reverse(beg_size, end_size, first_agent_id, second_agent_id, actor_set)
                     return True
             
@@ -241,23 +282,28 @@ class PushAndRotate:
         return False
 
     def reverse(self, beg_size, end_size, first_id, second_id, actor_set: ActorSet):
-        # 还原C++ reverse逻辑
-        for i in range(end_size-1, beg_size-1, -1):
+        """严格按照C++ reverse实现"""
+        for i in range(end_size - 1, beg_size - 1, -1):
             move = self.agents_moves[i]
-            id = move.id  # 现在move是ActorMove对象
-            if id == first_id:
-                id = second_id
-            elif id == second_id:
-                id = first_id
+            agent_id = move.id
+            if agent_id == first_id:
+                agent_id = second_id
+            elif agent_id == second_id:
+                agent_id = first_id
+            
+            # 找到对应的agent
             for a in actor_set:
-                if a.id == id:
-                    # 反向移动
-                    from_node = a.current
+                if a.id == agent_id:
+                    # 获取当前位置
+                    from_node = Node(a.current.x, a.current.y)
+                    # 计算反向移动的目标位置
                     to_node = Node(from_node.i - move.di, from_node.j - move.dj)
-                    a.current = to_node
-                    # 存储反向的增量移动
+                    # 更新agent位置
+                    a.current.x = to_node.i
+                    a.current.y = to_node.j
+                    # 记录反向移动
                     self.agents_moves.append(ActorMove(-move.di, -move.dj, a.id))
-        # 注意：此处简化，需根据C++逻辑补全
+                    break
 
     def solve(self, sub_map: SubMap, config: MAPFConfig, actor_set: ActorSet):
         # 完全还原C++ solve主流程，包括优先级排序和循环检测
@@ -674,67 +720,80 @@ class PushAndRotate:
         return False
 
     def exchange(self, sub_map: SubMap, actor_set: ActorSet, first: Node, second: Node):
-        """Improved exchange function matching C++ implementation"""
-        # Find successors of first node
+        """严格按照C++ exchange实现"""
+        # 找到first节点的后继节点
         successors = []
         for di, dj in [(-1,0),(1,0),(0,-1),(0,1)]:
             ni, nj = first.i + di, first.j + dj
             if sub_map.is_traversable(ni, nj):
                 successors.append(Node(ni, nj))
         
-        # Find free neighbors
+        # 找到空闲的邻居节点
         free_neigh = []
         for node in successors:
             if not any(a.current.x == node.i and a.current.y == node.j for a in actor_set):
                 free_neigh.append(node)
         
-        if len(free_neigh) < 2:
-            return False
-        
-        # Execute 6-step exchange sequence as in C++ version
+        # 执行6步交换序列，严格按照C++版本
         # Step 1: Move first to free_neigh[0]
-        for agent in actor_set:
-            if agent.current.x == first.i and agent.current.y == first.j:
-                agent.current.x = free_neigh[0].i
-                agent.current.y = free_neigh[0].j
+        for a in actor_set:
+            if a.current.x == first.i and a.current.y == first.j:
+                di = free_neigh[0].i - first.i
+                dj = free_neigh[0].j - first.j
+                self.agents_moves.append(ActorMove(di, dj, a.id))
+                a.current.x = free_neigh[0].i
+                a.current.y = free_neigh[0].j
                 break
         
         # Step 2: Move second to first
-        for agent in actor_set:
-            if agent.current.x == second.i and agent.current.y == second.j:
-                agent.current.x = first.i
-                agent.current.y = first.j
+        for a in actor_set:
+            if a.current.x == second.i and a.current.y == second.j:
+                di = first.i - second.i
+                dj = first.j - second.j
+                self.agents_moves.append(ActorMove(di, dj, a.id))
+                a.current.x = first.i
+                a.current.y = first.j
                 break
         
         # Step 3: Move first to free_neigh[1]
-        for agent in actor_set:
-            if agent.current.x == free_neigh[0].i and agent.current.y == free_neigh[0].j:
-                agent.current.x = free_neigh[1].i
-                agent.current.y = free_neigh[1].j
+        for a in actor_set:
+            if a.current.x == free_neigh[0].i and a.current.y == free_neigh[0].j:
+                di = free_neigh[1].i - free_neigh[0].i
+                dj = free_neigh[1].j - free_neigh[0].j
+                self.agents_moves.append(ActorMove(di, dj, a.id))
+                a.current.x = free_neigh[1].i
+                a.current.y = free_neigh[1].j
                 break
         
         # Step 4: Move free_neigh[0] to first
-        for agent in actor_set:
-            if agent.current.x == free_neigh[0].i and agent.current.y == free_neigh[0].j:
-                agent.current.x = first.i
-                agent.current.y = first.j
+        for a in actor_set:
+            if a.current.x == free_neigh[0].i and a.current.y == free_neigh[0].j:
+                di = first.i - free_neigh[0].i
+                dj = first.j - free_neigh[0].j
+                self.agents_moves.append(ActorMove(di, dj, a.id))
+                a.current.x = first.i
+                a.current.y = first.j
                 break
         
         # Step 5: Move first to second
-        for agent in actor_set:
-            if agent.current.x == first.i and agent.current.y == first.j:
-                agent.current.x = second.i
-                agent.current.y = second.j
+        for a in actor_set:
+            if a.current.x == first.i and a.current.y == first.j:
+                di = second.i - first.i
+                dj = second.j - first.j
+                self.agents_moves.append(ActorMove(di, dj, a.id))
+                a.current.x = second.i
+                a.current.y = second.j
                 break
         
         # Step 6: Move free_neigh[1] to first
-        for agent in actor_set:
-            if agent.current.x == free_neigh[1].i and agent.current.y == free_neigh[1].j:
-                agent.current.x = first.i
-                agent.current.y = first.j
+        for a in actor_set:
+            if a.current.x == free_neigh[1].i and a.current.y == free_neigh[1].j:
+                di = first.i - free_neigh[1].i
+                dj = first.j - free_neigh[1].j
+                self.agents_moves.append(ActorMove(di, dj, a.id))
+                a.current.x = first.i
+                a.current.y = first.j
                 break
-        
-        return True
 
     def get_subgraphs(self, sub_map: SubMap, actor_set: ActorSet):
         # 完全还原C++ getSubgraphs逻辑
@@ -917,9 +976,28 @@ class PushAndRotate:
                     nodes_occupations[new_pos] = []
                     node_ind[new_pos] = 0
                 
-                # 暂时禁用重复位置移除逻辑，直接添加新位置
-                agents_positions[agent_idx].append(new_pos)
-                nodes_occupations[new_pos].append(agent_idx)  # 存储agent索引
+                # 严格按照C++逻辑：检查重复位置
+                if (nodes_occupations[new_pos] and 
+                    nodes_occupations[new_pos][-1] == agent_idx):  # 比较agent索引
+                    # 移除重复的位置
+                    debug_log(f"Agent {move.id} 目标位置已有相同agent，开始移除重复位置")
+                    while (agents_positions[agent_idx] and 
+                           agents_positions[agent_idx][-1] != new_pos):
+                        cur_back = agents_positions[agent_idx][-1]
+                        debug_log(f"移除位置: ({cur_back.i}, {cur_back.j})")
+                        # 从occupation中移除
+                        if cur_back in nodes_occupations:
+                            last_ind = len(nodes_occupations[cur_back]) - 1
+                            while (last_ind >= 0 and 
+                                   nodes_occupations[cur_back][last_ind] != agent_idx):
+                                last_ind -= 1
+                            if last_ind >= 0:
+                                nodes_occupations[cur_back].pop(last_ind)
+                        agents_positions[agent_idx].pop()
+                else:
+                    # 添加新位置
+                    agents_positions[agent_idx].append(new_pos)
+                    nodes_occupations[new_pos].append(agent_idx)  # 存储agent索引
             else:
                 debug_log(f"警告: Agent ID {move.id} 超出范围")
         
@@ -927,7 +1005,7 @@ class PushAndRotate:
         for i, a in enumerate(actor_set):
             debug_log(f"Agent {a.id} (idx={i}) 位置序列: {[(p.i, p.j) for p in agents_positions[i]]}")
         
-        # 重新实现并行路径生成，更接近C++逻辑
+        # 并行路径生成（严格按照C++逻辑）
         debug_log(f"开始并行路径生成，agent_count={agent_count}")
         for i, a in enumerate(actor_set):
             debug_log(f"Agent {a.id} (idx={i}) 位置数量: {len(agents_positions[i])}")
@@ -941,17 +1019,17 @@ class PushAndRotate:
         finished = [False] * agent_count
         agent_ind = [0] * agent_count  # 每个agent在agents_positions中的当前位置
         
-        # 重新构建nodes_occupations和node_ind，用于并行移动检测
-        nodes_occupations = {}  # Node -> list of agent indices
+        # 使用第一阶段构建的完整nodes_occupations，但重置node_ind
+        # 注意：nodes_occupations已经在第一阶段构建完成，包含所有agent会访问的位置
         node_ind = {}  # Node -> current index in occupation list
         
-        # 初始化起始位置的occupations
-        for i in range(agent_count):
-            start_pos = agents_positions[i][0]
-            if start_pos not in nodes_occupations:
-                nodes_occupations[start_pos] = []
-                node_ind[start_pos] = 0
-            nodes_occupations[start_pos].append(i)
+        # 初始化所有位置的node_ind为0
+        for pos in nodes_occupations:
+            node_ind[pos] = 0
+        
+        debug_log(f"并行路径生成开始时的nodes_occupations:")
+        for pos, agents in nodes_occupations.items():
+            debug_log(f"  ({pos.i}, {pos.j}): {agents}")
         
         while True:
             has_moved = [False] * agent_count
@@ -959,44 +1037,90 @@ class PushAndRotate:
                 if has_moved[i] or finished[i]:
                     continue
                 
-                # 检查是否可以移动到下一个位置
+                if len(agents_positions[i]) == 1:
+                    debug_log(f"Agent {actor_set[i].id} (idx={i}) 只有1个位置，标记为完成")
+                    self.agents_paths[i].append(agents_positions[i][0])
+                    finished[i] = True
+                    continue
+                
+                # 严格按照C++逻辑实现链式移动
                 if agent_ind[i] + 1 < len(agents_positions[i]):
-                    next_node = agents_positions[i][agent_ind[i] + 1]
-                    current_node = agents_positions[i][agent_ind[i]]
-                    
-                    # 检查是否可以移动（基于C++逻辑的简化版本）
+                    # 构建移动路径（链式移动）
+                    path = []
+                    cur_agent = i
                     can_move = True
-                    if next_node in nodes_occupations:
-                        # 检查是否有其他agent在目标位置
-                        for j in nodes_occupations[next_node]:
-                            if j != i and not finished[j]:
-                                can_move = False
-                                break
                     
-                    if can_move:
-                        # 可以移动
-                        has_moved[i] = True
-                        # 更新occupations
-                        if current_node in nodes_occupations:
-                            nodes_occupations[current_node].remove(i)
+                    while True:
+                        path.append(cur_agent)
+                        next_node = agents_positions[cur_agent][agent_ind[cur_agent] + 1]
+                        
+                        # 确保next_node在node_ind中
+                        if next_node not in node_ind:
+                            node_ind[next_node] = 0
                         if next_node not in nodes_occupations:
                             nodes_occupations[next_node] = []
-                        nodes_occupations[next_node].append(i)
                         
-                        agent_ind[i] += 1
-                        self.agents_paths[i].append(agents_positions[i][agent_ind[i]])
-                        if agent_ind[i] == len(agents_positions[i]) - 1:
-                            finished[i] = True
+                        last_ind = node_ind[next_node]
+                        
+                        debug_log(f"Agent {actor_set[cur_agent].id} (idx={cur_agent}) 检查移动到 ({next_node.i}, {next_node.j})")
+                        debug_log(f"  node_ind[{next_node.i},{next_node.j}] = {last_ind}")
+                        debug_log(f"  nodes_occupations[{next_node.i},{next_node.j}] = {nodes_occupations[next_node]}")
+                        
+                        if (last_ind < len(nodes_occupations[next_node]) and 
+                            nodes_occupations[next_node][last_ind] == cur_agent):
+                            debug_log(f"  Agent {actor_set[cur_agent].id} 可以直接移动")
+                            break
+                        elif (len(nodes_occupations[next_node]) > 0 and
+                              last_ind + 1 < len(nodes_occupations[next_node]) and 
+                              nodes_occupations[next_node][last_ind + 1] == cur_agent):
+                            next_agent = nodes_occupations[next_node][last_ind]
+                            debug_log(f"  Agent {actor_set[cur_agent].id} 需要等待 Agent {actor_set[next_agent].id} (idx={next_agent})")
+                            
+                            current_pos = agents_positions[next_agent][agent_ind[next_agent]]
+                            if (finished[next_agent] or has_moved[next_agent] or next_agent < cur_agent or
+                                (current_pos.i != next_node.i or current_pos.j != next_node.j)):
+                                debug_log(f"  Agent {actor_set[next_agent].id} 无法移动，链式移动失败")
+                                debug_log(f"    finished[{next_agent}] = {finished[next_agent]}")
+                                debug_log(f"    has_moved[{next_agent}] = {has_moved[next_agent]}")
+                                debug_log(f"    next_agent < cur_agent: {next_agent} < {cur_agent} = {next_agent < cur_agent}")
+                                debug_log(f"    agents_positions[{next_agent}][{agent_ind[next_agent]}] = ({current_pos.i}, {current_pos.j})")
+                                debug_log(f"    next_node = ({next_node.i}, {next_node.j})")
+                                can_move = False
+                                break
+                            
+                            cur_agent = next_agent
+                            if cur_agent == i:
+                                debug_log(f"  检测到循环，停止链式移动")
+                                break
+                        else:
+                            debug_log(f"  Agent {actor_set[cur_agent].id} 无法移动")
+                            can_move = False
+                            break
+                    
+                    if can_move:
+                        debug_log(f"执行链式移动，路径: {path}")
+                        for agent_id in path:
+                            has_moved[agent_id] = True
+                            # 严格按照C++逻辑：递增离开位置的node_ind
+                            current_node = agents_positions[agent_id][agent_ind[agent_id]]
+                            node_ind[current_node] += 1
+                            agent_ind[agent_id] += 1
+                            self.agents_paths[agent_id].append(agents_positions[agent_id][agent_ind[agent_id]])
+                            if agent_ind[agent_id] == len(agents_positions[agent_id]) - 1:
+                                finished[agent_id] = True
                     else:
-                        # 不能移动，重复当前位置
+                        debug_log(f"Agent {actor_set[i].id} 无法移动，重复当前位置")
                         self.agents_paths[i].append(agents_positions[i][agent_ind[i]])
                 else:
-                    # 已经到达终点
+                    debug_log(f"Agent {actor_set[i].id} (idx={i}) 已经到达终点")
                     self.agents_paths[i].append(agents_positions[i][agent_ind[i]])
                     finished[i] = True
+                
+                # 移动逻辑已经在上面处理了，这里不需要额外的代码
             
             # 检查是否还有agent移动
             if not any(has_moved):
+                debug_log("没有agent移动，结束并行路径生成")
                 break
         
         # 写入结果

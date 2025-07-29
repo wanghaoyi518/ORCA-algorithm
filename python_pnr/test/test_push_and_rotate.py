@@ -2,7 +2,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from map_config_2 import MAP_CONFIG
+from map_config_cplx import MAP_CONFIG
 from python_pnr.sub_map import SubMap
 from python_pnr.actor import Actor
 from python_pnr.actor_set import ActorSet
