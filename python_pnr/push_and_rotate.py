@@ -390,11 +390,12 @@ class PushAndRotate:
                 return False
             not_finished.remove(cur_agent_id)
             
-            # 搜索路径 - 修复坐标转换
+            # 搜索路径 - 与C++版本保持一致：多边形地图使用finished_positions，非多边形地图使用空集合
+            occupied_set = finished_positions if is_polygon else set()
             path = self.search.search(
                 Node(int(cur_agent.current.x), int(cur_agent.current.y)),
                 Node(int(cur_agent.goal.x), int(cur_agent.goal.y)),
-                (lambda occ, s, g: occ - {(s.i, s.j), (g.i, g.j)})(set((a.current.x, a.current.y) for a in actor_set), Node(int(cur_agent.current.x), int(cur_agent.current.y)), Node(int(cur_agent.goal.x), int(cur_agent.goal.y)))
+                occupied_set
             )
             debug_log(f"A*路径 (Agent {cur_agent_id}): {[ (n.i, n.j) for n in path ] if path else '无路径'}")
             if not path or len(path) < 2:
