@@ -1,6 +1,6 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xrml version='1.0' encoding='utf-8'?>
 <root>
-    <agents number="10" type="orca">
+    <agents number="10" type="orca-par">
         <default_parameters size="0.3" movespeed="1" agentsmaxnum="10" timeboundary="5.4" sightradius="3.0" timeboundaryobst="33"/>
         <agent id="0" start.xr="37.5" start.yr="51.5" goal.xr="41.5" goal.yr="29.5"/>
         <agent id="1" start.xr="32.5" start.yr="7.5" goal.xr="7.5" goal.yr="21.5"/>

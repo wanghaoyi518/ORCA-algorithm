@@ -11,3 +11,5 @@ README.html
 *.txt
 *.log
 *.zip
+
+/task_examples/logs

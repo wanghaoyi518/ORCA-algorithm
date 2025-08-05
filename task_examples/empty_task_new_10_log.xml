@@ -1,5 +1,5 @@
 <root>
-    <agents number="10" type="orca">
+    <agents number="10" type="orca-par">
         <default_parameters size="0.3" movespeed="1" agentsmaxnum="10" timeboundary="5.4" sightradius="3.0" timeboundaryobst="33"/>
         <agent id="0" start.xr="37.5" start.yr="51.5" goal.xr="41.5" goal.yr="29.5"/>
         <agent id="1" start.xr="32.5" start.yr="7.5" goal.xr="7.5" goal.yr="21.5"/>
@@ -101,7 +101,7 @@
         <delta>0.1</delta>
     </algorithm>
     <log>
-        <summary successrate="100.000000" runtime="0.050000" flowtime="286.700012" makespan="47.100002" collisions="0" collisionsobst="0"/>
+        <summary successrate="100.000000" runtime="0.058000" flowtime="286.700012" makespan="47.100002" collisions="0" collisionsobst="0"/>
         <agent id="9">
             <path pathfound="true" steps="122">
                 <step number="0" xr="34.5" yr="28.5" next.xr="34.5" next.yr="28.5"/>

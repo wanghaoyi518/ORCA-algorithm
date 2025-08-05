@@ -1,4 +1,5 @@
 #include "agent_pnr.h"
+#include <iostream>
 
 
 agent_pnr::agent_pnr() : Agent() {
@@ -168,6 +169,13 @@ agent_pnr &agent_pnr::operator=(const agent_pnr &obj) {
 	return *this;
 }
 
+bool agent_pnr::InitPath() {
+	bool result = Agent::InitPath();
+	if (result) {
+		PrintAgentInitPath();
+	}
+	return result;
+}
 
 void agent_pnr::ComputeNewVelocity() {
 	if (PARExec) {
@@ -679,6 +687,7 @@ bool agent_pnr::UpdatePrefVelocity() {
 			float dist = goalVector.EuclideanNorm();
 			if ((options->trigger == MAPFTriggers::COMMON_POINT && CommonPointMAPFTrigger(dist)) ||
 				(options->trigger == MAPFTriggers::SPEED_BUFFER && SingleNeighbourMeanSpeedMAPFTrigger())) {
+				PrintDeadlockDetectionTrigger();
 				PreparePARExecution();
 				prefV = Point();
 
@@ -854,7 +863,23 @@ void agent_pnr::PreparePARExecution() {
 	successCount++;
 #if MAPF_LOG
 	// Save here
-	PARLog->SaveInstance(PARSet, PARMap, conf);
+	if (PARLog != nullptr) {
+		// Collect global waypoints from all PAR agents
+		std::vector<std::vector<Point>> globalWaypoints;
+		for (auto& ag : PARAgents) {
+			std::vector<Point> agentWaypoints;
+			// Add current position as first waypoint
+			agentWaypoints.push_back(ag->GetPosition());
+			// Add buffered waypoints (these are the waypoints that were pulled from global path)
+			for (auto& waypoint : ag->buffPar) {
+				agentWaypoints.push_back(waypoint);
+			}
+			// Add final goal as last waypoint
+			agentWaypoints.push_back(ag->goal);
+			globalWaypoints.push_back(agentWaypoints);
+		}
+		PARLog->SaveInstance(PARSet, PARMap, conf, globalWaypoints);
+	}
 #endif
 
 	for (auto &ag: PARAgents) {
@@ -1094,6 +1119,9 @@ bool agent_pnr::ComputePAREnv() {
 	int height = nodeRightBottom.i - nodeLeftTop.i + 1;
 	PARMap = SubMap(map, nodeLeftTop, {height, width}, 1);
 
+	// Print PAR initialization information
+	PrintPARInitialization();
+
 	// Starts and goals
 	std::unordered_map<int, Node> starts;
 	std::unordered_map<int, Node> goals;
@@ -1184,9 +1212,17 @@ bool agent_pnr::ComputePAREnv() {
 
 
 bool agent_pnr::ComputePAR() {
+	std::cout << "=== PAR Debug: ComputePAR started for Agent " << id << " ===" << std::endl;
+	std::cout << "PARMap size: " << PARMap.GetHeight() << "x" << PARMap.GetWidth() << std::endl;
+	std::cout << "PARSet actor count: " << PARSet.getActorCount() << std::endl;
+	
 	PARsearch = Astar<>(false);
 	PARSolver = PushAndRotate(&PARsearch);
+	
+	std::cout << "Starting PAR search for Agent " << id << "..." << std::endl;
 	PARres = PARSolver.startSearch(PARMap, conf, PARSet);
+	std::cout << "PAR search completed for Agent " << id << ", pathfound: " << (PARres.pathfound ? "true" : "false") << std::endl;
+	
 	return PARres.pathfound;
 }
 
@@ -1220,3 +1256,104 @@ unordered_map<std::string, float> agent_pnr::GetMAPFStatistics() const {
 
 	return stat;
 }
+
+void agent_pnr::PrintAgentInitPath() {
+	// Get path information from planner
+	std::list<Point> path;
+	if (planner != nullptr) {
+		// Try to get the current path from ThetaStar planner
+		ThetaStar* thetaPlanner = dynamic_cast<ThetaStar*>(planner);
+		if (thetaPlanner != nullptr) {
+			// Note: We need to access the private currPath member
+			// For now, we'll print basic initialization info
+		}
+	}
+	
+	std::cout << "=== Agent " << id << " Initialization ===" << std::endl;
+	std::cout << "Start: (" << start.X() << ", " << start.Y() << ")" << std::endl;
+	std::cout << "Goal: (" << goal.X() << ", " << goal.Y() << ")" << std::endl;
+	std::cout << "Radius: " << param.radius << std::endl;
+	std::cout << "Max Speed: " << param.maxSpeed << std::endl;
+	std::cout << "Sight Radius: " << param.sightRadius << std::endl;
+	std::cout << "=====================================" << std::endl;
+}
+
+void agent_pnr::PrintDeadlockDetectionTrigger() {
+	std::cout << "=== Deadlock Detection Triggered for Agent " << id << " ===" << std::endl;
+	std::cout << "Current position: (" << position.X() << ", " << position.Y() << ")" << std::endl;
+	std::cout << "Target waypoint: (" << nextForLog.X() << ", " << nextForLog.Y() << ")" << std::endl;
+	
+	Vector goalVector = nextForLog - position;
+	float dist = goalVector.EuclideanNorm();
+	std::cout << "Distance to target: " << dist << std::endl;
+	
+	std::cout << "Velocity: (" << currV.X() << ", " << currV.Y() << ")" << std::endl;
+	std::cout << "ORCA lines count: " << ORCALines.size() << std::endl;
+	
+	std::cout << "Neighbor agents: [";
+	for (size_t i = 0; i < Neighbours.size(); ++i) {
+		if (i > 0) std::cout << ", ";
+		std::cout << Neighbours[i].second->GetID();
+	}
+	std::cout << "]" << std::endl;
+	
+	// Print trigger conditions
+	if (options->trigger == MAPFTriggers::COMMON_POINT) {
+		std::cout << "Trigger type: COMMON_POINT" << std::endl;
+		std::cout << "Neighbors >= MAPFNum: " << (Neighbours.size() >= options->MAPFNum ? "true" : "false") << std::endl;
+		std::cout << "Distance < sightRadius: " << (dist < param.sightRadius ? "true" : "false") << std::endl;
+	} else if (options->trigger == MAPFTriggers::SPEED_BUFFER) {
+		std::cout << "Trigger type: SPEED_BUFFER" << std::endl;
+		std::cout << "Mean speed trigger: " << (SingleNeighbourMeanSpeedMAPFTrigger() ? "true" : "false") << std::endl;
+	}
+	
+	std::cout << "===============================================" << std::endl;
+}
+
+void agent_pnr::PrintPARInitialization() {
+	std::cout << "=== PAR Initialization for Agent " << id << " ===" << std::endl;
+	
+	// Submap information
+	std::cout << "Submap Information:" << std::endl;
+	std::cout << "  Size: " << PARMap.GetHeight() << "x" << PARMap.GetWidth() << std::endl;
+	std::cout << "  Cell Size: " << PARMap.GetCellSize() << std::endl;
+	
+	// Agent information
+	std::cout << "Agent Information:" << std::endl;
+	std::cout << "  Agents in deadlock: " << PARAgents.size() << std::endl;
+	std::cout << "  Agent IDs: [";
+	int count = 0;
+	for (auto& ag : PARAgents) {
+		if (count > 0) std::cout << ", ";
+		std::cout << ag->GetID();
+		count++;
+	}
+	std::cout << "]" << std::endl;
+	
+	// Start and goal points for each agent
+	std::cout << "Agent Start Points:" << std::endl;
+	for (auto& ag : PARAgents) {
+		std::cout << "  Agent " << ag->GetID() << ": (" << ag->GetPosition().X() << ", " << ag->GetPosition().Y() << ")" << std::endl;
+	}
+	
+	std::cout << "Agent Goal Points:" << std::endl;
+	for (auto& ag : PARAgents) {
+		std::cout << "  Agent " << ag->GetID() << ": (" << ag->goal.X() << ", " << ag->goal.Y() << ")" << std::endl;
+	}
+	
+	// PAR specific information
+	std::cout << "PAR Specific:" << std::endl;
+	std::cout << "  PAR Start: (" << PARStart.X() << ", " << PARStart.Y() << ")" << std::endl;
+	std::cout << "  PAR Goal: (" << PARGoal.X() << ", " << PARGoal.Y() << ")" << std::endl;
+	std::cout << "  PAR Actor ID: " << PARActorId << std::endl;
+	std::cout << "  In PAR Mode: " << (inPARMode ? "true" : "false") << std::endl;
+	std::cout << "  Move to PAR Pos: " << (moveToPARPos ? "true" : "false") << std::endl;
+	
+	std::cout << "===============================================" << std::endl;
+}
+
+#if MAPF_LOG
+void agent_pnr::SetMAPFInstanceLoggerRef(MAPFInstancesLogger *log) {
+	PARLog = log;
+}
+#endif

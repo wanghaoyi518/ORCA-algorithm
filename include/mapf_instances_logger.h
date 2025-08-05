@@ -33,13 +33,15 @@ class MAPFInstancesLogger {
 		MAPFInstancesLogger &operator=(const MAPFInstancesLogger &obj);
 
 
-		bool SaveInstance(MAPFActorSet &agents, SubMap &map, MAPFConfig &conf);
+		bool SaveInstance(MAPFActorSet &agents, SubMap &map, MAPFConfig &conf, const std::vector<std::vector<Point>>& globalWaypoints = {});
 
 //    void AddResults(const MAPFSearchResult &result);
 		size_t GetFileID() const;
 
-
 	private:
+		void CreateLogDirectory();
+		std::string ExtractExperimentName(const std::string& path);
+		std::string ExtractFileName(const std::string& path);
 		size_t fileID;
 		std::string pathTemplate;
 //    std::string resPath;

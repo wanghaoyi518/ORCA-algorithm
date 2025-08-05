@@ -622,9 +622,31 @@ PushAndRotate::combineNodeSubgraphs(MAPFActorSet &agentSet, std::vector<std::uno
 }
 
 void PushAndRotate::getSubgraphs(const SubMap &map, MAPFActorSet &agentSet) {
+	// Debug: Add memory allocation checks
+	std::cout << "=== PAR Debug: getSubgraphs started ===" << std::endl;
+	std::cout << "Map size: " << map.GetHeight() << "x" << map.GetWidth() << std::endl;
+	std::cout << "Empty cells: " << map.GetEmptyCellCount() << std::endl;
+	std::cout << "Agent count: " << agentSet.getActorCount() << std::endl;
+	
+	// Check if map size is reasonable
+	if (map.GetHeight() * map.GetWidth() > 10000) {
+		std::cout << "WARNING: Map size too large: " << map.GetHeight() * map.GetWidth() << std::endl;
+	}
+	
 	std::unordered_set<Node, NodeHash> close;
 	std::vector<std::unordered_set<Node, NodeHash>> components;
 	std::unordered_set<Node, NodeHash> joinNodes;
+	
+	// Try to reserve memory to avoid reallocation
+	try {
+		components.reserve(map.GetEmptyCellCount());
+		close.reserve(map.GetEmptyCellCount());
+		std::cout << "Memory reservation successful" << std::endl;
+	} catch (const std::bad_alloc& e) {
+		std::cout << "ERROR: Memory allocation failed: " << e.what() << std::endl;
+		return;
+	}
+	
 	int connectedComponentNum = 0;
 	for (int i = 0; i < map.GetHeight(); ++i) {
 		for (int j = 0; j < map.GetWidth(); ++j) {
@@ -635,8 +657,17 @@ void PushAndRotate::getSubgraphs(const SubMap &map, MAPFActorSet &agentSet) {
 					std::vector<std::pair<Node, Node>> edgeStack;
 					std::unordered_map<Node, int, NodeHash> in, up;
 					std::vector<std::tuple<Node, int, int>> stack = {std::make_tuple(curNode, -1, 0)};
+					int maxStackDepth = 0;
 
 					while (!stack.empty()) {
+						// Check stack depth to prevent stack overflow
+						if (stack.size() > maxStackDepth) {
+							maxStackDepth = stack.size();
+						}
+						if (stack.size() > 1000) {
+							std::cout << "ERROR: Stack depth too large: " << stack.size() << std::endl;
+							return;
+						}
 						std::tuple<Node, int, int> state = stack.back();
 						Node cur = std::get<0>(state);
 						int lastInd = std::get<1>(state);
@@ -681,6 +712,7 @@ void PushAndRotate::getSubgraphs(const SubMap &map, MAPFActorSet &agentSet) {
 
 					agentSet.addComponentSize(close.size() - oldSize);
 					++connectedComponentNum;
+					std::cout << "Component " << connectedComponentNum << " size: " << (close.size() - oldSize) << ", max stack depth: " << maxStackDepth << std::endl;
 				}
 			}
 		}
@@ -731,6 +763,11 @@ void PushAndRotate::getSubgraphs(const SubMap &map, MAPFActorSet &agentSet) {
 			}
 		}
 	}
+	
+	std::cout << "=== PAR Debug: getSubgraphs completed ===" << std::endl;
+	std::cout << "Total components: " << connectedComponentNum << std::endl;
+	std::cout << "Components vector size: " << components.size() << std::endl;
+	std::cout << "Join nodes count: " << joinNodes.size() << std::endl;
 }
 
 int PushAndRotate::getReachableNodesCount(const SubMap &map, MAPFActorSet &agentSet, Node &start,
@@ -889,29 +926,41 @@ MAPFSearchResult PushAndRotate::startSearch(const SubMap &map, const MAPFConfig 
 	getPriorities(map, agentSet);
 
 	result.pathfound = solve(map, config, agentSet, begin);
+	std::cout << "=== PAR Debug: solve completed, pathfound: " << (result.pathfound ? "true" : "false") << " ===" << std::endl;
+	
 	if (result.pathfound) {
+		std::cout << "=== PAR Debug: Starting path generation ===" << std::endl;
 		if (config.parallelizePaths1) {
+			std::cout << "Using getParallelPaths" << std::endl;
 			getParallelPaths(agentSet, config);
 		}
 		else {
+			std::cout << "Using getPaths" << std::endl;
 			getPaths(agentSet);
 		}
+		std::cout << "=== PAR Debug: Path generation completed ===" << std::endl;
 	}
 	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 	int elapsedMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
 	if (elapsedMilliseconds > config.maxTime) {
 		result.pathfound = false;
 	}
+	std::cout << "=== PAR Debug: Preparing result ===" << std::endl;
 	if (result.pathfound) {
+		std::cout << "Creating agentsMoves vector with " << agentsMoves.size() << " moves" << std::endl;
 		result.agentsMoves = new std::vector<ActorMove>(agentsMoves);
+		std::cout << "Creating agentsPaths vector with " << agentsPaths.size() << " paths" << std::endl;
 		result.agentsPaths = new std::vector<std::vector<Node>>(agentsPaths);
 		result.time = static_cast<double>(elapsedMilliseconds);
+		std::cout << "Result preparation completed successfully" << std::endl;
 	}
 	else {
+		std::cout << "No path found, setting null pointers" << std::endl;
 		result.agentsMoves = nullptr;
 		result.agentsPaths = nullptr;
 		result.time = static_cast<double>(elapsedMilliseconds);
 	}
+	std::cout << "=== PAR Debug: Returning result ===" << std::endl;
 	return result;
 }
 

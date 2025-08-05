@@ -31,9 +31,9 @@ Mission::Mission(std::string fileName, unsigned int agentsNum, unsigned int step
 
 #if MAPF_LOG
 	auto found = fileName.find_last_of(".");
-	string tmpPAR = fileName.erase(found);
+	string tmpPAR = fileName.substr(0, found);
 	std::string piece = "_" + std::to_string(agentsNum);
-	tmpPAR.insert(found, piece);
+	tmpPAR += piece;
 
 	MAPFLog = MAPFInstancesLogger(tmpPAR);
 #endif
@@ -119,6 +119,9 @@ Summary Mission::StartMission() {
 #if MAPF_LOG
 		if (dynamic_cast<ORCAAgentWithPARAndECBS*>(agent) != nullptr) {
 			dynamic_cast<ORCAAgentWithPARAndECBS *>(agent)->SetMAPFInstanceLoggerRef(&MAPFLog);
+		}
+		else if (dynamic_cast<agent_pnr*>(agent) != nullptr) {
+			dynamic_cast<agent_pnr *>(agent)->SetMAPFInstanceLoggerRef(&MAPFLog);
 		}
 #endif
 		bool found = agent->InitPath();

@@ -49,6 +49,8 @@ class agent_pnr : public Agent {
 
 		agent_pnr &operator=(const agent_pnr &obj);
 
+		bool InitPath();
+
 #if MAPF_LOG
 
 		void SetMAPFInstanceLoggerRef(MAPFInstancesLogger *log);
@@ -74,6 +76,11 @@ class agent_pnr : public Agent {
 
 		bool UpdatePAR();
 
+		void PrintAgentInitPath();
+
+		void PrintDeadlockDetectionTrigger();
+
+		void PrintPARInitialization();
 
 		SubMap PARMap;
 		MAPFActorSet PARSet;
